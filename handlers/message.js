@@ -1,22 +1,26 @@
 import { api, BotApiError } from 'sdk';
-import { EMOJI_TO_GAME, GAME_NAMES_FA, describeCondition, checkWin } from 'lib/games';
+import { EMOJI_TO_GAME, GAME_NAMES_FA, describeWinRule, checkWin } from 'lib/games';
 import { isChatAdmin } from 'lib/admin';
-import { getActiveRound, claimWin, listActiveRounds, cancelRound } from 'lib/rounds';
+import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress } from 'lib/rounds';
 import { displayName, mentionHtml } from 'lib/util';
 
 const HELP_TEXT = [
   '🎮 ربات بازی‌های ایموجی گروه',
   '',
   'وقتی یه بازی فعاله، کافیه همون ایموجی رو بفرستید:',
-  '⚽ فوتبال — اولین گل برنده‌ست',
-  '🏀 بسکتبال — اولین توپ داخل سبد برنده‌ست',
-  '🎲 تاس — اولین کسی که عدد تعیین‌شده رو بیاره برنده‌ست',
-  '🎯 دارت — اولین بولزای (وسط هدف) برنده‌ست',
-  '🎰 اسلات — اولین ترکیب برنده (مثلاً سه‌تا لیمو) برنده‌ست',
+  '⚽ فوتبال — گل',
+  '🏀 بسکتبال — توپ داخل سبد',
+  '🎲 تاس — عدد تعیین‌شده',
+  '🎯 دارت — بولزای (وسط هدف)',
+  '🎳 بولینگ — استرایک',
+  '🎰 اسلات — ترکیب برنده (مثلاً سه‌تا لیمو)',
+  '',
+  'موقع شروع بازی، ادمین می‌تونه تعیین کنه برنده کیه: اولین نفری که',
+  'شرط رو انجام بده، یا اولین نفری که X بار انجامش بده (مثلاً ۳ بار).',
   '',
   '👑 دستورات مخصوص ادمین‌ها:',
   '/game — شروع یه بازی جدید (با دکمه انتخاب می‌کنید)',
-  '/status — دیدن بازی‌های فعال گروه',
+  '/status — دیدن بازی‌های فعال گروه (و جدول امتیازات)',
   '/cancel — لغو یه بازی فعال',
   '/help — همین راهنما',
 ].join('\n');
@@ -51,29 +55,36 @@ async function handleDiceThrow(message) {
   const chat = message.chat;
   const dice = message.dice;
   const game = EMOJI_TO_GAME[dice.emoji];
-  if (!game) return; // an emoji-dice type we don't play (e.g. bowling, for now)
+  if (!game) return; // an emoji-dice type we don't play
 
   const round = await getActiveRound(chat.id, game);
   if (!round) return; // no active round for this game — ignore quietly, no spam
 
   if (!checkWin(game, round.conditionValue, dice.value)) return;
 
+  // Count this qualifying throw towards the user's progress. For the common
+  // case (targetCount === 1) this immediately returns 1, i.e. "first to hit it wins".
+  const currentCount = await incrementProgress(round.id, message.from.id, displayName(message.from));
+  if (currentCount < round.targetCount) return; // getting there, but not yet
+
   const claimed = await claimWin(round.id, {
     winnerUserId: message.from.id,
     winnerName: displayName(message.from),
     winnerValue: dice.value,
+    winnerCount: currentCount,
   });
   if (!claimed) return; // lost the race to another simultaneous throw
 
-  const text = [
+  const lines = [
     `🏆 ${mentionHtml(message.from)} برنده‌ی بازی ${GAME_NAMES_FA[game]} شد!`,
-    `شرط برد: ${describeCondition(game, round.conditionValue)}`,
-    '🎉 تبریک می‌گیم!',
-  ].join('\n');
+    `شرط برد: ${describeWinRule(game, round.conditionValue, round.targetCount)}`,
+  ];
+  if (round.targetCount > 1) lines.push(`تعداد موفقیت: ${currentCount}/${round.targetCount}`);
+  lines.push('🎉 تبریک می‌گیم!');
 
   const sent = await api.sendMessage({
     chat_id: chat.id,
-    text,
+    text: lines.join('\n'),
     parse_mode: 'HTML',
     reply_to_message_id: message.message_id,
   });
@@ -101,7 +112,7 @@ async function handleGameCommand(chat, from) {
       inline_keyboard: [
         [{ text: '🎲 تاس', callback_data: 'gpick:dice' }, { text: '🎯 دارت', callback_data: 'gpick:dart' }],
         [{ text: '🏀 بسکتبال', callback_data: 'gpick:basketball' }, { text: '⚽ فوتبال', callback_data: 'gpick:football' }],
-        [{ text: '🎰 اسلات', callback_data: 'gpick:slot' }],
+        [{ text: '🎳 بولینگ', callback_data: 'gpick:bowling' }, { text: '🎰 اسلات', callback_data: 'gpick:slot' }],
       ],
     },
   });
@@ -113,10 +124,19 @@ async function handleStatusCommand(chat) {
     await api.sendMessage({ chat_id: chat.id, text: 'الان هیچ بازی فعالی نیست. با /game یکی شروع کن!' });
     return;
   }
-  const lines = active.map(
-    (r) => `• ${GAME_NAMES_FA[r.game]} — شرط: ${describeCondition(r.game, r.conditionValue)}`,
-  );
-  await api.sendMessage({ chat_id: chat.id, text: `🎮 بازی‌های فعال:\n${lines.join('\n')}` });
+
+  const blocks = [];
+  for (const r of active) {
+    let block = `• ${GAME_NAMES_FA[r.game]} — شرط: ${describeWinRule(r.game, r.conditionValue, r.targetCount)}`;
+    if (r.targetCount > 1) {
+      const top = await getTopProgress(r.id, 3);
+      if (top.length > 0) {
+        block += '\n' + top.map((p) => `   ${p.userName}: ${p.count}/${r.targetCount}`).join('\n');
+      }
+    }
+    blocks.push(block);
+  }
+  await api.sendMessage({ chat_id: chat.id, text: `🎮 بازی‌های فعال:\n${blocks.join('\n')}` });
 }
 
 async function handleCancelCommand(chat, from) {
@@ -135,7 +155,7 @@ async function handleCancelCommand(chat, from) {
     text: 'کدوم بازی رو می‌خوای لغو کنی؟',
     reply_markup: {
       inline_keyboard: active.map((r) => [{
-        text: `${GAME_NAMES_FA[r.game]} (${describeCondition(r.game, r.conditionValue)})`,
+        text: `${GAME_NAMES_FA[r.game]} (${describeWinRule(r.game, r.conditionValue, r.targetCount)})`,
         callback_data: `gcancel:${r.id}`,
       }]),
     },
