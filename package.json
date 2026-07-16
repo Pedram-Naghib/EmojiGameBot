@@ -1,0 +1,12 @@
+{
+  "name": "emoji-games-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "tgcloud push && tgcloud migrate",
+    "status": "tgcloud status"
+  },
+  "devDependencies": {
+    "@tgcloud/cli": "^1.0.0"
+  }
+}
