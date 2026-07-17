@@ -1,8 +1,8 @@
-import { api, BotApiError } from 'sdk';
-import { GAME_NAMES_FA, describeWinRule, conditionTypeFor } from 'lib/games';
-import { isChatAdmin } from 'lib/admin';
-import { getActiveRound, startRound, setAnnounceMessage, cancelRound } from 'lib/rounds';
-import { displayName } from 'lib/util';
+import { api, BotApiError } from '../src/telegram.js';
+import { GAME_NAMES_FA, describeWinRule, conditionTypeFor } from '../lib/games.js';
+import { isChatAdmin } from '../lib/admin.js';
+import { getActiveRound, startRound, setAnnounceMessage, cancelRound } from '../lib/rounds.js';
+import { displayName } from '../lib/util.js';
 
 const COUNT_OPTIONS = [1, 2, 3, 5, 10];
 const NO_VALUE = '_'; // placeholder condition-value for games with no extra choice (dart/bowling/basketball/football)

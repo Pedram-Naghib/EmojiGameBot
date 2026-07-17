@@ -1,4 +1,9 @@
-import { table, integer, text, index, sql } from 'sdk/db';
+import { sqliteTable as table, integer, text, index } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+
+// Unchanged from the original schema.js — only the import source changed
+// (drizzle-orm/sqlite-core instead of the platform's sdk/db, which was
+// modeled directly on drizzle's SQLite API).
 
 // One row per game round. Only one row can be `active` at a time for a given
 // (chatId, game) pair — enforced in code, not by a DB constraint, because we
@@ -35,7 +40,7 @@ export const progress = table('progress', {
   userName: text('user_name'),
   count:    integer('count').notNull().default(0),
   // `${roundId}:${userId}` — single-column conflict target for upserts,
-  // since the platform's onConflictDoUpdate is documented against one column.
+  // since drizzle's onConflictDoUpdate is documented against one column.
   key:      text('key').unique(),
 }, (t) => ({
   roundIdx: index('idx_progress_round').on(t.roundId),

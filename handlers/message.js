@@ -1,8 +1,8 @@
-import { api, BotApiError } from 'sdk';
-import { EMOJI_TO_GAME, GAME_NAMES_FA, describeWinRule, checkWin } from 'lib/games';
-import { isChatAdmin } from 'lib/admin';
-import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress } from 'lib/rounds';
-import { displayName, mentionHtml } from 'lib/util';
+import { api, BotApiError } from '../src/telegram.js';
+import { EMOJI_TO_GAME, GAME_NAMES_FA, describeWinRule, checkWin } from '../lib/games.js';
+import { isChatAdmin } from '../lib/admin.js';
+import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress } from '../lib/rounds.js';
+import { displayName, mentionHtml } from '../lib/util.js';
 
 const HELP_TEXT = [
   '🎮 ربات بازی‌های ایموجی گروه',

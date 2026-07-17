@@ -1,83 +1,119 @@
-# ربات بازی‌های ایموجی گروه (Emoji Games Bot)
+# Emoji Games Bot — webhook / self-hosted version
 
-ربات تلگرام کاملاً سرورلس، ساخته‌شده روی **Telegram Serverless** (`core.telegram.org/bots/serverless`).
-هیچ سروری، هیچ دیتابیس خارجی‌ای لازم نیست — همه‌چیز (کد + دیتابیس SQLite) روی زیرساخت خود تلگرام اجرا می‌شه.
+This is your `EmojiGameBot` game logic, ported off Telegram's serverless
+platform (`@tgcloud`) onto a plain Node.js server you run yourself, talking
+to Telegram over a **webhook** instead of the platform's built-in transport.
 
-## بازی‌های پشتیبانی‌شده
+What changed vs. the original repo:
 
-| ایموجی | بازی      | شرط برد                                             |
-| ------ | --------- | ---------------------------------------------------- |
-| 🎲     | تاس       | اولین کسی که عدد تعیین‌شده توسط ادمین رو بیاره (۱ تا ۶، قابل تنظیم) |
-| 🎯     | دارت      | اولین بولزای (وسط هدف)                                |
-| 🏀     | بسکتبال   | اولین توپی که وارد سبد بشه                            |
-| ⚽     | فوتبال    | اولین گل                                              |
-| 🎰     | اسلات     | اولین ترکیب برنده — لیمو، انگور، بار، جکپات (777)، یا هر سه نماد یکسان (همه قابل تنظیم توسط ادمین) |
+| Original (serverless)                     | This version                                   |
+| ------------------------------------------ | ----------------------------------------------- |
+| `sdk` (`api`, `BotApiError`)                | `src/telegram.js` — plain `fetch` wrapper       |
+| `sdk/db` (query builder)                    | `drizzle-orm` + `better-sqlite3`                |
+| Platform auto-invokes `handlers/*.js`       | `src/router.js` dispatches on the update shape  |
+| Platform manages the webhook for you        | `scripts/set-webhook.js` / `express` server     |
+| `npx tgcloud push` / `migrate`              | `npm start`, schema bootstraps itself on boot   |
 
-اضافه کردن بازی جدید (مثلاً 🎳 بولینگ) فقط نیازمند چند خط توی `lib/games.js` هست — بقیه‌ی کد دست‌نخورده می‌مونه.
+Your game rules (`lib/games.js`), win-condition logic, admin checks, and
+Persian message copy are all untouched.
 
-## نحوه‌ی کار
+## 1. Prerequisites
 
-1. یه ادمین گروه دستور `/game` رو می‌فرسته.
-2. ربات با دکمه‌های شیشه‌ای (inline keyboard) بازی و شرط برد رو می‌پرسه.
-3. ربات پیام "بازی شروع شد" رو می‌فرسته و **پین** می‌کنه.
-4. اعضای گروه ایموجی مربوطه رو اسپم می‌کنن.
-5. اولین نفری که شرط رو برآورده کنه، ربات با پیام جداگانه (ریپلای به پرتاب برنده) اعلامش می‌کنه، اون پیام رو پین می‌کنه، و بازی رو می‌بنده — پرتاب‌های بعدی نادیده گرفته می‌شن تا بازی بعدی شروع بشه.
+- A server (VPS, droplet, etc.) with a **public HTTPS URL**. Telegram will
+  only deliver webhooks to `https://` addresses on port 443, 80, 88, or 8443.
+- Node.js 18+ (for native `fetch`).
+- Build tools for `better-sqlite3`'s native addon: `python3`, `make`, `g++`
+  (skip this if you deploy with the provided Docker image, which installs
+  them automatically).
+- A bot token from [@BotFather](https://t.me/BotFather).
+- In BotFather: `/setprivacy` → **Disable** for your bot, so it can see dice
+  throws and messages from other group members (not just commands).
+- Add the bot to your group and give it **"Delete messages" / "Pin
+  messages"** admin permission (winner/announcement pinning silently no-ops
+  without it, per the original code's design).
 
-هم‌زمانی (race condition) هندل شده: اگه دو نفر تقریباً همزمان شرط رو برآورده کنن، یه بررسی اتمیک روی دیتابیس تضمین می‌کنه فقط یکی‌شون برنده اعلام بشه.
-
-## دستورات
-
-- `/game` — شروع بازی جدید (فقط ادمین)
-- `/status` — نمایش بازی‌های فعال گروه
-- `/cancel` — لغو یه بازی فعال (فقط ادمین)
-- `/help` — راهنما
-
-## دیپلوی (Deploy)
-
-نیاز به Node.js 18+ داری. مراحل:
+## 2. Configure
 
 ```bash
-# ۱. توی BotFather سرویس Serverless رو برای ربات فعال کن:
-#    @BotFather → your bot → Serverless → Enable
-#    سپس از همون‌جا: Serverless → CLI Access → Access token رو کپی کن
-
-# ۲. پروژه رو بساز (این پوشه رو جایگزین کن یا فایل‌ها رو کپی کن توش)
-npm create @tgcloud/bot emoji_games_bot
-cd emoji_games_bot
-# فایل‌های schema.js ، lib/ و handlers/ این پروژه رو جایگزین نسخه‌ی پیش‌فرض کن
-
-# ۳. لاگین با توکنی که از BotFather گرفتی
-npx tgcloud login
-
-# ۴. دیپلوی کد
-npx tgcloud push
-
-# ۵. ساخت جدول دیتابیس
-npx tgcloud migrate
+cp .env.example .env
 ```
 
-بعد از این مراحل ربات زنده‌ست — نیازی به وبهوک دستی، سرور، یا هیچ‌چیز دیگه‌ای نیست؛
-پلتفرم تلگرام خودش وبهوک رو مدیریت می‌کنه.
+Fill in `.env`:
 
-### تست بدون دیپلوی
+- `BOT_TOKEN` — from BotFather.
+- `PUBLIC_URL` — your server's public HTTPS URL, e.g. `https://yourdomain.com`.
+- `WEBHOOK_PATH_SECRET` — random string (`openssl rand -hex 24`). Becomes
+  part of the webhook URL path so it can't be guessed.
+- `WEBHOOK_SECRET_TOKEN` — another random string. Telegram echoes it back
+  in a header on every request; the server checks it and rejects anything
+  else, even someone who somehow found the path.
+- `DB_PATH` — where the SQLite file lives (defaults to `./data/bot.db`).
+
+## 3. Run it
+
+### Option A — Docker (recommended)
 
 ```bash
-npx tgcloud run handlers/message '{ chat: { id: -100123, type: "supergroup" }, from: { id: 1, first_name: "Pedram" }, text: "/game" }'
+docker compose up -d --build
 ```
 
-### مجوزهای لازم برای ربات توی گروه
+Then put a reverse proxy with TLS in front of port 3000 (see
+`deploy/nginx.conf.example` for an nginx config using Let's Encrypt).
 
-- Delete/Pin messages (برای پین‌کردن اعلامیه‌ها و برنده‌ها) — بدون این مجوز، ربات کار می‌کنه ولی پین انجام نمی‌شه.
-- خوندن پیام‌ها (Group Privacy رو توی BotFather خاموش کن: `/setprivacy` → Disable) — وگرنه ربات پرتاب‌های تاس/دارت/... رو نمی‌بینه.
+### Option B — Bare Node.js + systemd
 
-## ساختار پروژه
-
+```bash
+npm install
+npm start
 ```
-schema.js                  # جدول rounds (بازی‌های فعال/تمام‌شده)
-lib/games.js               # قوانین بازی‌ها، مپ ایموجی، دیکود اسلات
-lib/admin.js               # چک ادمین بودن
-lib/rounds.js              # لایه‌ی دیتابیس (شروع/برد/لغو/لیست)
-lib/util.js                # نام نمایشی، escape، منشن
-handlers/message.js        # دستورات + تشخیص پرتاب تاس/دارت/...
-handlers/callback_query.js # ویزارد دکمه‌ای شروع/لغو بازی
+
+For a real deployment, run it as a service instead of a foreground process:
+
+```bash
+sudo cp -r . /opt/emoji-games-bot
+sudo cp deploy/emoji-games-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now emoji-games-bot
 ```
+
+Either way, put nginx (or Caddy) in front for HTTPS — Telegram requires a
+valid TLS certificate on the webhook URL; a raw HTTP port doesn't qualify.
+
+## 4. Register the webhook with Telegram
+
+Once the server is reachable at `https://yourdomain.com` and `.env` is filled in:
+
+```bash
+npm run set-webhook
+```
+
+This calls `setWebhook` with your `PUBLIC_URL` + `WEBHOOK_PATH_SECRET` and
+prints Telegram's `getWebhookInfo` response so you can confirm it took (look
+for `"pending_update_count": 0` and no `last_error_message`).
+
+To go back to local testing (or switch to polling with a different tool),
+remove it with:
+
+```bash
+npm run delete-webhook
+```
+
+## 5. Verify
+
+- `GET https://yourdomain.com/healthz` should return `ok`.
+- Send `/help` to the bot in a chat — you should get the Persian help text.
+- Run `/game` as a group admin, pick a game, then throw the matching emoji.
+
+## Notes
+
+- The SQLite schema bootstraps itself (`CREATE TABLE IF NOT EXISTS ...`) on
+  every startup in `src/db.js` — no separate migrate step needed for this
+  simple two-table schema. If you extend `src/schema.js` significantly,
+  consider switching to real `drizzle-kit` migrations.
+- The webhook handler responds `200 OK` to Telegram immediately and
+  processes the update afterward, so a slow `getChatMember` call, etc.,
+  can't cause Telegram to time out and retry (which would otherwise risk
+  double-processing a dice throw).
+- Race-safety for "first to hit it wins" is preserved: `claimWin` in
+  `lib/rounds.js` only succeeds if the round was still `active` at update
+  time, same as the original.
