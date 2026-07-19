@@ -54,6 +54,27 @@ sqlite.exec(`
     key        TEXT UNIQUE
   );
   CREATE INDEX IF NOT EXISTS idx_bot_admins_chat ON bot_admins (chat_id);
+
+  CREATE TABLE IF NOT EXISTS round_attempts (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id  INTEGER NOT NULL,
+    user_id   INTEGER NOT NULL,
+    user_name TEXT,
+    count     INTEGER NOT NULL DEFAULT 0,
+    key       TEXT UNIQUE
+  );
+  CREATE INDEX IF NOT EXISTS idx_round_attempts_round ON round_attempts (round_id);
 `);
+
+// `rounds` already existed before max_attempts_per_user was added, and SQLite
+// has no "ADD COLUMN IF NOT EXISTS" — so add it defensively and ignore the
+// "duplicate column" error on every subsequent startup. (On this project's
+// current Render Free plan the filesystem — and this whole DB — gets wiped on
+// every redeploy anyway, so this mainly matters once persistent storage is added.)
+try {
+  sqlite.exec(`ALTER TABLE rounds ADD COLUMN max_attempts_per_user INTEGER;`);
+} catch (e) {
+  if (!/duplicate column/i.test(e.message)) throw e;
+}
 
 export const db = drizzle(sqlite, { schema });

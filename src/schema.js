@@ -17,6 +17,11 @@ export const rounds = table('rounds', {
   conditionType:     text('condition_type').notNull(),  // 'exact' | 'bullseye' | 'goal' | 'slot_combo' | 'strike'
   conditionValue:    text('condition_value'),           // e.g. '3', 'lemon', 'any' (null for dart/goal/strike games)
   targetCount:       integer('target_count').notNull().default(1), // how many times a user must hit the condition to win
+  // Cap on total qualifying throws any single user may make during this round,
+  // regardless of whether they won or lost each one (separate from the
+  // cooldown-based rate limit, which only spaces throws out in time). Null
+  // means unlimited — this is the default for every newly-started round.
+  maxAttemptsPerUser: integer('max_attempts_per_user'),
   createdBy:         integer('created_by'),
   createdByName:     text('created_by_name'),
   createdAt:         integer('created_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
@@ -62,4 +67,18 @@ export const botAdmins = table('bot_admins', {
   key:       text('key').unique(),
 }, (t) => ({
   chatIdx: index('idx_bot_admins_chat').on(t.chatId),
+}));
+
+// Every qualifying throw a user makes in a round, win or lose — distinct from
+// `progress`, which only counts throws that matched the win condition. Used
+// to enforce rounds.maxAttemptsPerUser.
+export const roundAttempts = table('round_attempts', {
+  id:       integer('id').primaryKey({ autoIncrement: true }),
+  roundId:  integer('round_id').notNull(),
+  userId:   integer('user_id').notNull(),
+  userName: text('user_name'),
+  count:    integer('count').notNull().default(0),
+  key:      text('key').unique(), // `${roundId}:${userId}`
+}, (t) => ({
+  roundIdx: index('idx_round_attempts_round').on(t.roundId),
 }));

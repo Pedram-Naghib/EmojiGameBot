@@ -25,7 +25,7 @@ export default async function (cq) {
     if (!privileged) {
       await api.answerCallbackQuery({
         callback_query_id: cq.id,
-        text: '⛔ فقط مالک گروه یا ادمین‌های ربات اجازه دارن.',
+        text: '⛔ فقط مالک گروه، ادمین‌های تلگرام، یا ادمین‌های ربات اجازه دارن.',
         show_alert: true,
       });
       return;

@@ -1,7 +1,7 @@
 import { api, BotApiError } from '../src/telegram.js';
 import { EMOJI_TO_GAME, GAME_NAMES_FA, describeWinRule, checkWin } from '../lib/games.js';
 import { isChatOwner, isPrivileged } from '../lib/admin.js';
-import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress } from '../lib/rounds.js';
+import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress, getAttemptCount, incrementAttempt, setMaxAttempts } from '../lib/rounds.js';
 import { addBotAdmin, removeBotAdmin, listBotAdmins } from '../lib/botAdmins.js';
 import { displayName, mentionHtml } from '../lib/util.js';
 import { getLimitSeconds, setLimitSeconds, checkAndRecordThrow } from '../lib/ratelimit.js';
@@ -24,11 +24,12 @@ const HELP_TEXT = [
   '/addadmin — ریپلای رو یه پیام از کسی کن که می‌خوای ادمین ربات بشه',
   '/removeadmin — ریپلای رو یه پیام از یه ادمین ربات کن تا حذفش کنی',
   '',
-  '🛡 دستورات مالک + ادمین‌های ربات:',
+  '🛡 دستورات مالک + ادمین‌های تلگرام + ادمین‌های ربات:',
   '/game — شروع یه بازی جدید',
   '/status — دیدن بازی‌های فعال گروه (و جدول امتیازات)',
   '/cancel — لغو یه بازی فعال',
   '/setlimit ثانیه — فاصله‌ی مجاز بین دو پرتاب هر نفر (پیش‌فرض ۵ ثانیه، برای جلوگیری از اسپم)',
+  '/setmaxtries تعداد — سقف تعداد شرکت هر نفر تو بازی فعلی (پیش‌فرض نامحدود؛ ۰ = نامحدود)',
   '/admins — لیست ادمین‌های ربات در این گروه',
   '/help — همین راهنما',
 ].join('\n');
@@ -58,6 +59,8 @@ export default async function (message) {
       return handleCancelCommand(chat, from);
     case '/setlimit':
       return handleSetLimitCommand(chat, from, text);
+    case '/setmaxtries':
+      return handleSetMaxTriesCommand(chat, from, text);
     case '/addadmin':
       return handleAddAdminCommand(chat, from, message);
     case '/removeadmin':
@@ -89,6 +92,23 @@ async function handleDiceThrow(message) {
     }
     return;
   }
+
+  // Cap on total throws per user for this round (separate from the cooldown
+  // above — this limits *how many* attempts total, not how fast). Unlimited
+  // by default (round.maxAttemptsPerUser is null unless an admin set one).
+  if (round.maxAttemptsPerUser) {
+    const used = await getAttemptCount(round.id, message.from.id);
+    if (used >= round.maxAttemptsPerUser) {
+      try {
+        await api.deleteMessage({ chat_id: chat.id, message_id: message.message_id });
+      } catch (e) {
+        if (!(e instanceof BotApiError)) throw e;
+        console.warn('max-attempts delete failed', e.description);
+      }
+      return;
+    }
+  }
+  await incrementAttempt(round.id, message.from.id, displayName(message.from));
 
   if (!checkWin(game, round.conditionValue, dice.value)) return;
 
@@ -132,7 +152,7 @@ async function handleDiceThrow(message) {
 async function handleGameCommand(chat, from) {
   const privileged = await isPrivileged(chat.id, from.id, chat.type);
   if (!privileged) {
-    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن بازی جدید شروع کنن.' });
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه، ادمین‌های تلگرام، یا ادمین‌های ربات می‌تونن بازی جدید شروع کنن.' });
     return;
   }
   await api.sendMessage({
@@ -172,7 +192,7 @@ async function handleStatusCommand(chat) {
 async function handleSetLimitCommand(chat, from, text) {
   const privileged = await isPrivileged(chat.id, from.id, chat.type);
   if (!privileged) {
-    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن این محدودیت رو تغییر بدن.' });
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه، ادمین‌های تلگرام، یا ادمین‌های ربات می‌تونن این محدودیت رو تغییر بدن.' });
     return;
   }
 
@@ -191,6 +211,46 @@ async function handleSetLimitCommand(chat, from, text) {
   await api.sendMessage({
     chat_id: chat.id,
     text: `✅ فاصله‌ی مجاز بین دو پرتاب هر نفر روی ${seconds} ثانیه تنظیم شد.`,
+  });
+}
+
+async function handleSetMaxTriesCommand(chat, from, text) {
+  const privileged = await isPrivileged(chat.id, from.id, chat.type);
+  if (!privileged) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه، ادمین‌های تلگرام، یا ادمین‌های ربات می‌تونن این محدودیت رو تغییر بدن.' });
+    return;
+  }
+
+  const active = await listActiveRounds(chat.id);
+  const round = active[0]; // at most one active round per chat, per the one-game-at-a-time rule
+  if (!round) {
+    await api.sendMessage({ chat_id: chat.id, text: 'الان هیچ بازی فعالی نیست. اول با /game یکی شروع کن.' });
+    return;
+  }
+
+  const arg = text.trim().split(/\s+/)[1];
+
+  if (!arg) {
+    const current = round.maxAttemptsPerUser ? `${round.maxAttemptsPerUser} بار` : 'نامحدود';
+    await api.sendMessage({
+      chat_id: chat.id,
+      text: `استفاده درست: /setmaxtries تعداد\nمثال: /setmaxtries 3\nبرای نامحدود کردن دوباره: /setmaxtries 0\nمقدار فعلی برای «${GAME_NAMES_FA[round.game]}»: ${current}`,
+    });
+    return;
+  }
+
+  const count = Number(arg);
+  if (!Number.isInteger(count) || count < 0) {
+    await api.sendMessage({ chat_id: chat.id, text: 'عدد باید صحیح و صفر یا بیشتر باشه (۰ یعنی نامحدود).' });
+    return;
+  }
+
+  await setMaxAttempts(round.id, count === 0 ? null : count);
+  await api.sendMessage({
+    chat_id: chat.id,
+    text: count === 0
+      ? `✅ محدودیت تعداد شرکت برای «${GAME_NAMES_FA[round.game]}» برداشته شد (نامحدود).`
+      : `✅ هر نفر حداکثر ${count} بار می‌تونه برای «${GAME_NAMES_FA[round.game]}» شرکت کنه.`,
   });
 }
 
@@ -269,7 +329,7 @@ async function handleListAdminsCommand(chat) {
 async function handleCancelCommand(chat, from) {
   const privileged = await isPrivileged(chat.id, from.id, chat.type);
   if (!privileged) {
-    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن بازی رو لغو کنن.' });
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه، ادمین‌های تلگرام، یا ادمین‌های ربات می‌تونن بازی رو لغو کنن.' });
     return;
   }
   const active = await listActiveRounds(chat.id);
