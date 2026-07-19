@@ -1,6 +1,6 @@
 import { api, BotApiError } from '../src/telegram.js';
 import { GAME_NAMES_FA, describeWinRule, conditionTypeFor } from '../lib/games.js';
-import { isChatOwner, isPrivileged } from '../lib/admin.js';
+import { isPrivileged } from '../lib/admin.js';
 import { getActiveRound, hasActiveRound, startRound, setAnnounceMessage, cancelRound } from '../lib/rounds.js';
 import { displayName } from '../lib/util.js';
 
@@ -17,24 +17,15 @@ export default async function (cq) {
 
   // Re-check permissions on every button press — anyone could tap a button
   // meant for whoever ran the original command, since inline keyboards are
-  // visible to all. Starting a new game is owner-only; cancelling an existing
-  // one is open to the owner or any bot-admin.
-  if (GAME_WIZARD_PREFIXES.some((p) => data.startsWith(p))) {
-    const owner = await isChatOwner(chat.id, from.id, chat.type);
-    if (!owner) {
-      await api.answerCallbackQuery({
-        callback_query_id: cq.id,
-        text: '⛔ فقط مالک گروه می‌تونه بازی جدید شروع کنه.',
-        show_alert: true,
-      });
-      return;
-    }
-  } else if (data.startsWith('gcancel:')) {
+  // visible to all. Starting a new game and cancelling one are both open to
+  // the owner or any bot-admin (managing the bot-admin list itself is the
+  // only thing reserved strictly for the owner, and that's a /command, not a button).
+  if (GAME_WIZARD_PREFIXES.some((p) => data.startsWith(p)) || data.startsWith('gcancel:')) {
     const privileged = await isPrivileged(chat.id, from.id, chat.type);
     if (!privileged) {
       await api.answerCallbackQuery({
         callback_query_id: cq.id,
-        text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن بازی رو لغو کنن.',
+        text: '⛔ فقط مالک گروه یا ادمین‌های ربات اجازه دارن.',
         show_alert: true,
       });
       return;
