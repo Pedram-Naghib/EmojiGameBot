@@ -43,6 +43,17 @@ sqlite.exec(`
     key       TEXT UNIQUE
   );
   CREATE INDEX IF NOT EXISTS idx_progress_round ON progress (round_id);
+
+  CREATE TABLE IF NOT EXISTS bot_admins (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    user_name  TEXT,
+    added_by   INTEGER,
+    added_at   INTEGER DEFAULT (unixepoch()),
+    key        TEXT UNIQUE
+  );
+  CREATE INDEX IF NOT EXISTS idx_bot_admins_chat ON bot_admins (chat_id);
 `);
 
 export const db = drizzle(sqlite, { schema });

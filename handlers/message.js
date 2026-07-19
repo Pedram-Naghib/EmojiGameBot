@@ -1,7 +1,8 @@
 import { api, BotApiError } from '../src/telegram.js';
 import { EMOJI_TO_GAME, GAME_NAMES_FA, describeWinRule, checkWin } from '../lib/games.js';
-import { isChatAdmin } from '../lib/admin.js';
+import { isChatOwner, isPrivileged } from '../lib/admin.js';
 import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress } from '../lib/rounds.js';
+import { addBotAdmin, removeBotAdmin, listBotAdmins } from '../lib/botAdmins.js';
 import { displayName, mentionHtml } from '../lib/util.js';
 import { getLimitSeconds, setLimitSeconds, checkAndRecordThrow } from '../lib/ratelimit.js';
 
@@ -19,11 +20,16 @@ const HELP_TEXT = [
   'موقع شروع بازی، ادمین می‌تونه تعیین کنه برنده کیه: اولین نفری که',
   'شرط رو انجام بده، یا اولین نفری که X بار انجامش بده (مثلاً ۳ بار).',
   '',
-  '👑 دستورات مخصوص ادمین‌ها:',
-  '/game — شروع یه بازی جدید (با دکمه انتخاب می‌کنید)',
+  '👑 دستورات مخصوص مالک گروه:',
+  '/game — شروع یه بازی جدید (فقط مالک گروه)',
+  '/addadmin — ریپلای رو یه پیام از کسی کن که می‌خوای ادمین ربات بشه',
+  '/removeadmin — ریپلای رو یه پیام از یه ادمین ربات کن تا حذفش کنی',
+  '',
+  '🛡 دستورات مالک + ادمین‌های ربات:',
   '/status — دیدن بازی‌های فعال گروه (و جدول امتیازات)',
   '/cancel — لغو یه بازی فعال',
   '/setlimit ثانیه — فاصله‌ی مجاز بین دو پرتاب هر نفر (پیش‌فرض ۵ ثانیه، برای جلوگیری از اسپم)',
+  '/admins — لیست ادمین‌های ربات در این گروه',
   '/help — همین راهنما',
 ].join('\n');
 
@@ -52,6 +58,12 @@ export default async function (message) {
       return handleCancelCommand(chat, from);
     case '/setlimit':
       return handleSetLimitCommand(chat, from, text);
+    case '/addadmin':
+      return handleAddAdminCommand(chat, from, message);
+    case '/removeadmin':
+      return handleRemoveAdminCommand(chat, from, message);
+    case '/admins':
+      return handleListAdminsCommand(chat);
   }
 }
 
@@ -118,9 +130,9 @@ async function handleDiceThrow(message) {
 }
 
 async function handleGameCommand(chat, from) {
-  const admin = await isChatAdmin(chat.id, from.id, chat.type);
-  if (!admin) {
-    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط ادمین‌های گروه می‌تونن بازی جدید شروع کنن.' });
+  const owner = await isChatOwner(chat.id, from.id, chat.type);
+  if (!owner) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه می‌تونه بازی جدید شروع کنه.' });
     return;
   }
   await api.sendMessage({
@@ -158,9 +170,9 @@ async function handleStatusCommand(chat) {
 }
 
 async function handleSetLimitCommand(chat, from, text) {
-  const admin = await isChatAdmin(chat.id, from.id, chat.type);
-  if (!admin) {
-    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط ادمین‌های گروه می‌تونن این محدودیت رو تغییر بدن.' });
+  const privileged = await isPrivileged(chat.id, from.id, chat.type);
+  if (!privileged) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن این محدودیت رو تغییر بدن.' });
     return;
   }
 
@@ -182,10 +194,82 @@ async function handleSetLimitCommand(chat, from, text) {
   });
 }
 
+async function handleAddAdminCommand(chat, from, message) {
+  const owner = await isChatOwner(chat.id, from.id, chat.type);
+  if (!owner) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه می‌تونه ادمین ربات اضافه کنه.' });
+    return;
+  }
+
+  const target = message.reply_to_message?.from;
+  if (!target) {
+    await api.sendMessage({
+      chat_id: chat.id,
+      text: 'روی پیام کسی که می‌خوای ادمین ربات بشه ریپلای کن و بنویس /addadmin',
+    });
+    return;
+  }
+
+  if (target.is_bot) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ نمی‌شه یه ربات رو ادمین ربات کرد.' });
+    return;
+  }
+
+  await addBotAdmin(chat.id, target.id, displayName(target), from.id);
+  await api.sendMessage({
+    chat_id: chat.id,
+    text: `✅ ${mentionHtml(target)} به لیست ادمین‌های ربات اضافه شد.`,
+    parse_mode: 'HTML',
+  });
+}
+
+async function handleRemoveAdminCommand(chat, from, message) {
+  const owner = await isChatOwner(chat.id, from.id, chat.type);
+  if (!owner) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه می‌تونه ادمین ربات رو حذف کنه.' });
+    return;
+  }
+
+  const target = message.reply_to_message?.from;
+  if (!target) {
+    await api.sendMessage({
+      chat_id: chat.id,
+      text: 'روی پیام یه ادمین ربات ریپلای کن و بنویس /removeadmin',
+    });
+    return;
+  }
+
+  const removed = await removeBotAdmin(chat.id, target.id);
+  if (!removed) {
+    await api.sendMessage({ chat_id: chat.id, text: `${displayName(target)} روی لیست ادمین‌های ربات نبود.` });
+    return;
+  }
+
+  await api.sendMessage({
+    chat_id: chat.id,
+    text: `✅ ${mentionHtml(target)} از لیست ادمین‌های ربات حذف شد.`,
+    parse_mode: 'HTML',
+  });
+}
+
+async function handleListAdminsCommand(chat) {
+  const admins = await listBotAdmins(chat.id);
+  if (admins.length === 0) {
+    await api.sendMessage({
+      chat_id: chat.id,
+      text: 'هنوز هیچ ادمین ربات‌ای اضافه نشده. مالک گروه می‌تونه با ریپلای + /addadmin یکی اضافه کنه.',
+    });
+    return;
+  }
+
+  const lines = admins.map((a) => `• ${a.userName || 'کاربر'}`);
+  await api.sendMessage({ chat_id: chat.id, text: `🛡 ادمین‌های ربات:\n${lines.join('\n')}` });
+}
+
 async function handleCancelCommand(chat, from) {
-  const admin = await isChatAdmin(chat.id, from.id, chat.type);
-  if (!admin) {
-    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط ادمین‌ها می‌تونن بازی رو لغو کنن.' });
+  const privileged = await isPrivileged(chat.id, from.id, chat.type);
+  if (!privileged) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن بازی رو لغو کنن.' });
     return;
   }
   const active = await listActiveRounds(chat.id);

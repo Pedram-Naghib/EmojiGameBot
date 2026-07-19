@@ -45,3 +45,21 @@ export const progress = table('progress', {
 }, (t) => ({
   roundIdx: index('idx_progress_round').on(t.roundId),
 }));
+
+// Custom, per-group admin list managed by the bot itself (separate from
+// Telegram's own group-admin roles). Only the group's real owner (Telegram
+// "creator") can add/remove entries here; members on this list get access to
+// day-to-day moderation commands (/cancel, /setlimit) without being made a
+// full Telegram admin and without being able to start a new game themselves.
+export const botAdmins = table('bot_admins', {
+  id:        integer('id').primaryKey({ autoIncrement: true }),
+  chatId:    integer('chat_id').notNull(),
+  userId:    integer('user_id').notNull(),
+  userName:  text('user_name'),
+  addedBy:   integer('added_by'),
+  addedAt:   integer('added_at', { mode: 'timestamp' }).default(sql`(unixepoch())`),
+  // `${chatId}:${userId}` — single-column unique/conflict target, same pattern as progress.key
+  key:       text('key').unique(),
+}, (t) => ({
+  chatIdx: index('idx_bot_admins_chat').on(t.chatId),
+}));

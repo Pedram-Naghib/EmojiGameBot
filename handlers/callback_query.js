@@ -1,11 +1,13 @@
 import { api, BotApiError } from '../src/telegram.js';
 import { GAME_NAMES_FA, describeWinRule, conditionTypeFor } from '../lib/games.js';
-import { isChatAdmin } from '../lib/admin.js';
+import { isChatOwner, isPrivileged } from '../lib/admin.js';
 import { getActiveRound, hasActiveRound, startRound, setAnnounceMessage, cancelRound } from '../lib/rounds.js';
 import { displayName } from '../lib/util.js';
 
 const COUNT_OPTIONS = [1, 2, 3, 5, 10];
 const NO_VALUE = '_'; // placeholder condition-value for games with no extra choice (dart/bowling/basketball/football)
+
+const GAME_WIZARD_PREFIXES = ['gpick:', 'gcond:', 'gcount:'];
 
 export default async function (cq) {
   const chat = cq.message?.chat;
@@ -13,16 +15,30 @@ export default async function (cq) {
   const data = cq.data ?? '';
   if (!chat) return;
 
-  // Re-check admin on every button press — a non-admin could tap a button
-  // meant for whoever ran /game, since inline keyboards are visible to all.
-  const admin = await isChatAdmin(chat.id, from.id, chat.type);
-  if (!admin) {
-    await api.answerCallbackQuery({
-      callback_query_id: cq.id,
-      text: '⛔ فقط ادمین‌های گروه اجازه دارن.',
-      show_alert: true,
-    });
-    return;
+  // Re-check permissions on every button press — anyone could tap a button
+  // meant for whoever ran the original command, since inline keyboards are
+  // visible to all. Starting a new game is owner-only; cancelling an existing
+  // one is open to the owner or any bot-admin.
+  if (GAME_WIZARD_PREFIXES.some((p) => data.startsWith(p))) {
+    const owner = await isChatOwner(chat.id, from.id, chat.type);
+    if (!owner) {
+      await api.answerCallbackQuery({
+        callback_query_id: cq.id,
+        text: '⛔ فقط مالک گروه می‌تونه بازی جدید شروع کنه.',
+        show_alert: true,
+      });
+      return;
+    }
+  } else if (data.startsWith('gcancel:')) {
+    const privileged = await isPrivileged(chat.id, from.id, chat.type);
+    if (!privileged) {
+      await api.answerCallbackQuery({
+        callback_query_id: cq.id,
+        text: '⛔ فقط مالک گروه یا ادمین‌های ربات می‌تونن بازی رو لغو کنن.',
+        show_alert: true,
+      });
+      return;
+    }
   }
 
   if (data.startsWith('gpick:')) return handlePick(cq, chat, data.slice('gpick:'.length));
