@@ -16,7 +16,7 @@ const url = `${publicUrl}/webhook/${pathSecret}`;
 const result = await api.setWebhook({
   url,
   secret_token: secretToken,
-  allowed_updates: ['message', 'callback_query'],
+  allowed_updates: ['message', 'callback_query', 'my_chat_member'],
   drop_pending_updates: false,
 });
 
