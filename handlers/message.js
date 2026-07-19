@@ -313,17 +313,32 @@ async function handleRemoveAdminCommand(chat, from, message) {
 }
 
 async function handleListAdminsCommand(chat) {
-  const admins = await listBotAdmins(chat.id);
-  if (admins.length === 0) {
-    await api.sendMessage({
-      chat_id: chat.id,
-      text: 'هنوز هیچ ادمین ربات‌ای اضافه نشده. مالک گروه می‌تونه با ریپلای + /addadmin یکی اضافه کنه.',
-    });
-    return;
+  let members = [];
+  try {
+    members = await api.getChatAdministrators({ chat_id: chat.id });
+  } catch (e) {
+    if (!(e instanceof BotApiError)) throw e;
+    console.warn('getChatAdministrators failed', e.description);
   }
 
-  const lines = admins.map((a) => `• ${a.userName || 'کاربر'}`);
-  await api.sendMessage({ chat_id: chat.id, text: `🛡 ادمین‌های ربات:\n${lines.join('\n')}` });
+  const owner = members.find((m) => m.status === 'creator');
+  const telegramAdmins = members.filter((m) => m.status === 'administrator');
+  const botAdmins = await listBotAdmins(chat.id);
+
+  const lines = ['👑 مالک گروه:'];
+  lines.push(owner ? `• ${displayName(owner.user)}` : '• نامشخص');
+
+  lines.push('', '🛡 ادمین‌های تلگرام:');
+  lines.push(telegramAdmins.length > 0
+    ? telegramAdmins.map((m) => `• ${displayName(m.user)}`).join('\n')
+    : '• کسی نیست');
+
+  lines.push('', '🔧 ادمین‌های ربات (اضافه‌شده با /addadmin):');
+  lines.push(botAdmins.length > 0
+    ? botAdmins.map((a) => `• ${a.userName || 'کاربر'}`).join('\n')
+    : '• کسی اضافه نشده');
+
+  await api.sendMessage({ chat_id: chat.id, text: lines.join('\n') });
 }
 
 async function handleCancelCommand(chat, from) {
