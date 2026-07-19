@@ -1,7 +1,7 @@
 import { api, BotApiError } from '../src/telegram.js';
 import { GAME_NAMES_FA, describeWinRule, conditionTypeFor } from '../lib/games.js';
 import { isChatAdmin } from '../lib/admin.js';
-import { getActiveRound, startRound, setAnnounceMessage, cancelRound } from '../lib/rounds.js';
+import { getActiveRound, hasActiveRound, startRound, setAnnounceMessage, cancelRound } from '../lib/rounds.js';
 import { displayName } from '../lib/util.js';
 
 const COUNT_OPTIONS = [1, 2, 3, 5, 10];
@@ -43,11 +43,13 @@ export default async function (cq) {
 }
 
 async function handlePick(cq, chat, game) {
-  const existing = await getActiveRound(chat.id, game);
-  if (existing) {
+  // Only one game may run at a time per group (across all game types), so
+  // members aren't spamming several different emojis simultaneously.
+  const busy = await hasActiveRound(chat.id);
+  if (busy) {
     await api.answerCallbackQuery({
       callback_query_id: cq.id,
-      text: 'یه بازی از همین نوع همین الان فعاله. اول با /cancel لغوش کن.',
+      text: 'یه بازی دیگه همین الان تو این گروه فعاله. اول با /cancel لغوش کن.',
       show_alert: true,
     });
     return;
@@ -112,6 +114,17 @@ async function finalizeStart(cq, chat, from, game, conditionValue, targetCount) 
     createdBy: from.id,
     createdByName: displayName(from),
   });
+
+  if (!round) {
+    // Another admin finished their own wizard first, in the gap between our
+    // earlier hasActiveRound() check and now.
+    await api.answerCallbackQuery({
+      callback_query_id: cq.id,
+      text: 'یه بازی دیگه همین الان تو این گروه فعال شد. اول با /cancel لغوش کن.',
+      show_alert: true,
+    });
+    return;
+  }
 
   const text = [
     `🎮 بازی ${GAME_NAMES_FA[game]} شروع شد!`,

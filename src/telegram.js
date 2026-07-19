@@ -47,6 +47,7 @@ export const api = {
   answerCallbackQuery: (params) => call('answerCallbackQuery', params),
   pinChatMessage: (params) => call('pinChatMessage', params),
   getChatMember: (params) => call('getChatMember', params),
+  deleteMessage: (params) => call('deleteMessage', params),
 
   // Webhook management (used by scripts/set-webhook.js and delete-webhook.js)
   setWebhook: (params) => call('setWebhook', params),

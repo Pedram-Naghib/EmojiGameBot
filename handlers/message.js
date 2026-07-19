@@ -3,6 +3,7 @@ import { EMOJI_TO_GAME, GAME_NAMES_FA, describeWinRule, checkWin } from '../lib/
 import { isChatAdmin } from '../lib/admin.js';
 import { getActiveRound, claimWin, listActiveRounds, incrementProgress, getTopProgress } from '../lib/rounds.js';
 import { displayName, mentionHtml } from '../lib/util.js';
+import { getLimitSeconds, setLimitSeconds, checkAndRecordThrow } from '../lib/ratelimit.js';
 
 const HELP_TEXT = [
   '🎮 ربات بازی‌های ایموجی گروه',
@@ -22,6 +23,7 @@ const HELP_TEXT = [
   '/game — شروع یه بازی جدید (با دکمه انتخاب می‌کنید)',
   '/status — دیدن بازی‌های فعال گروه (و جدول امتیازات)',
   '/cancel — لغو یه بازی فعال',
+  '/setlimit ثانیه — فاصله‌ی مجاز بین دو پرتاب هر نفر (پیش‌فرض ۵ ثانیه، برای جلوگیری از اسپم)',
   '/help — همین راهنما',
 ].join('\n');
 
@@ -48,6 +50,8 @@ export default async function (message) {
       return handleStatusCommand(chat);
     case '/cancel':
       return handleCancelCommand(chat, from);
+    case '/setlimit':
+      return handleSetLimitCommand(chat, from, text);
   }
 }
 
@@ -59,6 +63,20 @@ async function handleDiceThrow(message) {
 
   const round = await getActiveRound(chat.id, game);
   if (!round) return; // no active round for this game — ignore quietly, no spam
+
+  // Rate limit: only the user's most recent qualifying throw counts. If they
+  // throw again before the cooldown elapses, delete the spammy throw instead
+  // of scoring it.
+  if (!checkAndRecordThrow(chat.id, message.from.id)) {
+    try {
+      await api.deleteMessage({ chat_id: chat.id, message_id: message.message_id });
+    } catch (e) {
+      // Bot probably lacks "delete messages" admin permission in this group.
+      if (!(e instanceof BotApiError)) throw e;
+      console.warn('rate-limit delete failed', e.description);
+    }
+    return;
+  }
 
   if (!checkWin(game, round.conditionValue, dice.value)) return;
 
@@ -137,6 +155,31 @@ async function handleStatusCommand(chat) {
     blocks.push(block);
   }
   await api.sendMessage({ chat_id: chat.id, text: `🎮 بازی‌های فعال:\n${blocks.join('\n')}` });
+}
+
+async function handleSetLimitCommand(chat, from, text) {
+  const admin = await isChatAdmin(chat.id, from.id, chat.type);
+  if (!admin) {
+    await api.sendMessage({ chat_id: chat.id, text: '⛔ فقط ادمین‌های گروه می‌تونن این محدودیت رو تغییر بدن.' });
+    return;
+  }
+
+  const arg = text.trim().split(/\s+/)[1];
+  const seconds = Number(arg);
+
+  if (!arg || !Number.isInteger(seconds) || seconds < 1) {
+    await api.sendMessage({
+      chat_id: chat.id,
+      text: `استفاده درست: /setlimit ثانیه\nمثال: /setlimit 10\nمقدار فعلی: ${getLimitSeconds(chat.id)} ثانیه`,
+    });
+    return;
+  }
+
+  setLimitSeconds(chat.id, seconds);
+  await api.sendMessage({
+    chat_id: chat.id,
+    text: `✅ فاصله‌ی مجاز بین دو پرتاب هر نفر روی ${seconds} ثانیه تنظیم شد.`,
+  });
 }
 
 async function handleCancelCommand(chat, from) {
